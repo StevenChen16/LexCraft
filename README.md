@@ -1,0 +1,2 @@
+# LexCraft
+Smart Contract System
