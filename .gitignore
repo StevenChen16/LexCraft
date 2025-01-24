@@ -1,0 +1,5 @@
+__pycache__/
+core/__pycache__
+database/__pycache__
+migrations/__pycache__
+config.py
