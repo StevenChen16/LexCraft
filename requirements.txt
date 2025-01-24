@@ -8,5 +8,4 @@ python-dateutil==2.8.2
 pytest==7.4.3
 black==23.11.0
 pylint==3.0.2
-streamlit==1.29.0
-streamlit-extras==0.3.6
+gradio==4.12.0

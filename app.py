@@ -1,4 +1,4 @@
-import streamlit as st
+import gradio as gr
 import json
 from datetime import datetime
 from core.assistance import ContractAssistant
@@ -6,15 +6,10 @@ from core.ContractGenerator import ContractGenerator
 from typing import Dict, List
 import os
 
-# 初始化 Session State
-if 'contract' not in st.session_state:
-    st.session_state.contract = None
-if 'generator' not in st.session_state:
-    st.session_state.generator = ContractGenerator()
-if 'assistant' not in st.session_state:
-    st.session_state.assistant = ContractAssistant()
-if 'modification_input' not in st.session_state:
-    st.session_state.modification_input = ""
+# 初始化全局变量
+generator = ContractGenerator()
+assistant = ContractAssistant()
+current_contract = None
 
 def convert_contract_to_markdown(contract: Dict) -> str:
     """Convert contract to Markdown format"""
@@ -51,8 +46,8 @@ def convert_contract_to_markdown(contract: Dict) -> str:
     
     return "\n".join(md_content)
 
-def export_contract(contract: Dict):
-    """Export contract to file"""
+def export_contract(contract: Dict) -> str:
+    """Export contract to file and return the filename"""
     if not os.path.exists("exports"):
         os.makedirs("exports")
     
@@ -67,126 +62,113 @@ def export_contract(contract: Dict):
     
     return filename
 
-def display_contract(contract: Dict):
-    """Display contract in Streamlit"""
-    st.subheader("Contract Content")
+def generate_contract(requirements: str) -> tuple[str, str]:
+    """Generate contract based on user requirements"""
+    global current_contract
     
-    # Display contract basic information
-    with st.expander("Contract Information", expanded=True):
-        st.write(f"Version: {contract.get('version', 'N/A')}")
-        st.write(f"Type: {contract.get('type', 'N/A')}")
+    # Get AI analysis results
+    analysis = assistant.interact_with_ai(requirements, interaction_type="initial")
     
-    # Display sections
-    for section, content in contract.get('sections', {}).items():
-        if content:  # Only display non-empty sections
-            with st.expander(f"{section.title()}", expanded=True):
-                if isinstance(content, dict):
-                    for key, value in content.items():
-                        st.write(f"**{key}**: {value}")
-                else:
-                    st.write(content)
+    # Generate initial contract
+    current_contract = generator.generate_contract(
+        analysis['template_type'],
+        analysis['basic_info'],
+        [clause['clause_type'] for clause in analysis.get('suggested_clauses', [])]
+    )
     
-    # Display special clauses
-    special_clauses = contract.get('special_clauses', [])
-    if special_clauses:
-        with st.expander("Special Clauses", expanded=True):
-            for clause in special_clauses:
-                st.markdown(f"**{clause.get('title', 'Untitled Clause')}**")
-                st.write(clause.get('content', 'Clause content not specified'))
-                st.write("---")
+    # Convert contract to markdown for display
+    contract_md = convert_contract_to_markdown(current_contract)
+    
+    return json.dumps(analysis, indent=2), contract_md
 
-def main():
-    """Main function for user interaction"""
-    st.title("LexCraft Smart Contract System")
+def modify_contract(modifications: str) -> tuple[str, str]:
+    """Modify existing contract based on user input"""
+    global current_contract
     
-    # Create two-column layout with adjusted ratio
-    left_col, right_col = st.columns([2, 3])  
+    if not current_contract:
+        return "No contract to modify", "Please generate a contract first"
     
-    with left_col:
-        if not st.session_state.contract:
-            st.write("Welcome to LexCraft Smart Contract System!")
-            st.write("Please describe your requirements, and we'll generate a suitable contract for you.")
-            st.write("Example: I want to rent an apartment in Vancouver for 2000 CAD per month, and I need to be allowed to have a cat...")
+    # Get AI analysis results
+    analysis = assistant.interact_with_ai(modifications)
+    
+    # Apply modifications
+    current_contract = generator.modify_contract(
+        current_contract,
+        analysis.get('modifications', [])
+    )
+    
+    # Convert updated contract to markdown
+    contract_md = convert_contract_to_markdown(current_contract)
+    
+    return json.dumps(analysis, indent=2), contract_md
+
+def export_current_contract() -> str:
+    """Export current contract and return the file path"""
+    if not current_contract:
+        return "No contract to export"
+    
+    filename = export_contract(current_contract)
+    return f"Contract exported to: {filename}"
+
+def reset_contract() -> tuple[str, str]:
+    """Reset the current contract"""
+    global current_contract
+    current_contract = None
+    return "", "Contract cleared. Ready to generate new contract."
+
+# 创建 Gradio 界面
+with gr.Blocks(title="LexCraft Smart Contract System") as demo:
+    gr.Markdown("# LexCraft Smart Contract System")
+    
+    with gr.Row():
+        # 左侧控制面板
+        with gr.Column(scale=2):
+            with gr.Tab("Generate Contract"):
+                requirements_input = gr.Textbox(
+                    label="Describe your requirements",
+                    placeholder="Example: I want to rent an apartment in Vancouver for 2000 CAD per month, and I need to be allowed to have a cat...",
+                    lines=10
+                )
+                generate_btn = gr.Button("Generate Contract")
             
-            # First round: Understanding initial requirements
-            initial_input = st.text_area("Describe your requirements:", height=200)
+            with gr.Tab("Modify Contract"):
+                modifications_input = gr.Textbox(
+                    label="Describe your modifications",
+                    lines=10
+                )
+                modify_btn = gr.Button("Apply Changes")
+                export_btn = gr.Button("Export Contract")
+                reset_btn = gr.Button("Create New Contract")
             
-            if st.button("Generate Contract"):
-                with st.spinner("Analyzing your requirements..."):
-                    # Get AI analysis results
-                    requirements = st.session_state.assistant.interact_with_ai(initial_input, interaction_type="initial")
-                    
-                    # Display AI analysis results
-                    with st.expander("AI Analysis Results", expanded=False):
-                        st.json(requirements)
-                    
-                    # Generate initial contract
-                    st.session_state.contract = st.session_state.generator.generate_contract(
-                        requirements['template_type'],
-                        requirements['basic_info'],
-                        [clause['clause_type'] for clause in requirements.get('suggested_clauses', [])]
-                    )
-                    
-                    st.success("Contract generated successfully!")
-                    st.rerun()
+            analysis_output = gr.JSON(label="AI Analysis Results")
         
-        else:
-            # Modification section
-            st.subheader("Contract Modification")
-            
-            # Modification input box
-            modification_input = st.text_area(
-                "Describe your modifications:",
-                height=200,
-                key="modification_area",
-                value=st.session_state.modification_input
-            )
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Apply Changes"):
-                    with st.spinner("Processing modification request..."):
-                        # Get AI analysis results
-                        modifications = st.session_state.assistant.interact_with_ai(modification_input)
-                        
-                        # Display AI analysis results
-                        with st.expander("AI Analysis Results", expanded=False):
-                            st.json(modifications)
-                        
-                        # Apply modifications
-                        st.session_state.contract = st.session_state.generator.modify_contract(
-                            st.session_state.contract,
-                            modifications.get('modifications', [])
-                        )
-                        
-                        # Clear modification input
-                        st.session_state.modification_input = ""
-                        
-                        st.success("Changes applied successfully!")
-                        st.rerun()
-            
-            with col2:
-                if st.button("Export Contract"):
-                    filename = export_contract(st.session_state.contract)
-                    st.success(f"Contract exported to: {filename}")
-                    
-                    # Provide download link
-                    with open(filename, 'r', encoding='utf-8') as f:
-                        st.download_button(
-                            label="Download Contract",
-                            data=f.read(),
-                            file_name=os.path.basename(filename),
-                            mime="text/markdown"
-                        )
-            
-            if st.button("Create New Contract"):
-                st.session_state.contract = None
-                st.rerun()
+        # 右侧合同显示
+        contract_display = gr.Markdown(label="Contract Content")
     
-    # Right side contract display
-    with right_col:
-        if st.session_state.contract:
-            display_contract(st.session_state.contract)
+    # 事件处理
+    generate_btn.click(
+        generate_contract,
+        inputs=[requirements_input],
+        outputs=[analysis_output, contract_display]
+    )
+    
+    modify_btn.click(
+        modify_contract,
+        inputs=[modifications_input],
+        outputs=[analysis_output, contract_display]
+    )
+    
+    export_btn.click(
+        export_current_contract,
+        inputs=[],
+        outputs=[analysis_output]
+    )
+    
+    reset_btn.click(
+        reset_contract,
+        inputs=[],
+        outputs=[analysis_output, contract_display]
+    )
 
 if __name__ == "__main__":
-    main()
+    demo.launch()
